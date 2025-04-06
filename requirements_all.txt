@@ -2698,6 +2698,9 @@ scsgate==0.1.0
 # homeassistant.components.backup
 securetar==2025.2.1
 
+# homeassistant.components.azure_ai
+semantic-kernel==1.27.1
+
 # homeassistant.components.sendgrid
 sendgrid==6.8.2
 

@@ -1,0 +1,13 @@
+{
+  "domain": "azure_ai",
+  "name": "Azure AI Conversation",
+  "dependencies": ["conversation"],
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "codeowners": ["@jakubcermak"],
+  "config_flow": true,
+  "single_config_entry": true,
+  "documentation": "https://www.home-assistant.io/integrations/azure_ai",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": ["semantic-kernel==1.27.1"]
+}
