@@ -2,28 +2,34 @@
 
 from __future__ import annotations
 
+from homeassistant.components import conversation
+from homeassistant.components.azure_ai import AzureAIConfigEntry
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.function_choice_behavior import (
-    FunctionChoiceBehavior,
-)
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.connectors.ai.chat_completion_client_base import (
+    ChatCompletionClientBase,
+)
+from semantic_kernel.contents.chat_history import ChatHistory
+from .const import (
+    CONF_ENABLE_CONTROL,
+    DOMAIN,
+    CONF_API_KEY,
+    CONF_SYSTEM_PROMPT,
+    CONF_MODEL_DEPLOYMENT,
+    CONF_BASE_URL,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
+    CONF_REASONING_EFFORT,
+    LOGGER,
+)
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import (
     AzureChatPromptExecutionSettings,
 )
-
-from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers import device_registry as dr
-
-from .const import (
-    CONF_API_KEY,
-    CONF_BASE_URL,
-    CONF_MODEL_DEPLOYMENT,
-    CONF_REASONING_EFFORT,
-    CONF_SYSTEM_PROMPT,
-    CONF_TEMPERATURE,
-    CONF_TOP_P,
-    DOMAIN,
+from semantic_kernel.connectors.ai.function_choice_behavior import (
+    FunctionChoiceBehavior,
 )
 
 
@@ -35,34 +41,25 @@ class AzureAIConversationEntity(
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: AzureAIConfigEntry) -> None:
         """Initialize the agent."""
-
-        # Enable planning
-        self.execution_settings = AzureChatPromptExecutionSettings()
-        self.execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
-
-        self.entry = entry
-        self.kernel = Kernel()
-        self.chat_completion = AzureChatCompletion(
-            api_key=entry.data[CONF_API_KEY],
-            endpoint=entry.data[CONF_BASE_URL],
-            deployment_name=entry.data[CONF_MODEL_DEPLOYMENT],
-            temperature=entry.data.get(CONF_TEMPERATURE),
-            top_p=entry.data.get(CONF_TOP_P),
-            reasoning_effort=entry.data.get(CONF_REASONING_EFFORT),
-        )
-        self.kernel.register_plugin("azure_ai", self)
-        self.system_prompt = entry.data.get(CONF_SYSTEM_PROMPT, "")
-
+        self.config_entry = entry
         self._attr_unique_id = entry.entry_id
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
-            manufacturer="Azure",
+            manufacturer="Microsoft Azure",
             model="Azure OpenAI",
             entry_type=dr.DeviceEntryType.SERVICE,
         )
+        if self.config_entry.data.get(CONF_ENABLE_CONTROL):
+            self._attr_supported_features = (
+                conversation.ConversationEntityFeature.CONTROL
+            )
+
+        # Enable planning
+        self.execution_settings = AzureChatPromptExecutionSettings()
+        self.execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
@@ -80,13 +77,30 @@ class AzureAIConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Call the Azure AI API."""
-        history = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_input.text},
-        ]
+        client = self.config_entry.runtime_data
+        options = self.entry.options
+
+        history = ChatHistory()
+        history.add_system_message(options[CONF_SYSTEM_PROMPT])
+        LOGGER.debug("system prompt: %s", options[CONF_SYSTEM_PROMPT])
+        for message in chat_log.content:
+            if message.role == "user":
+                LOGGER.debug("user message: %s", message.text)
+                history.add_user_message(message.text)
+            elif message.role == "assistant":
+                LOGGER.debug("assistant message: %s", message.text)
+                history.add_assistant_message(message.text)
+            else:
+                LOGGER.debug("unknown message: %s %s", message.role, message.text)
 
         try:
-            response = await self.chat_completion.get_chat_message_content(history)
+            chat_completion: AzureChatCompletion = client.get_service(
+                None, AzureChatCompletion
+            )
+            response = await chat_completion.get_chat_message_content(
+                history, self.execution_settings, kernel=client
+            )
+            LOGGER.debug("Azure AI response: %s", response)
         except Exception as err:
             raise conversation.ConverseError(
                 f"Error communicating with Azure AI: {err}"
